@@ -1,0 +1,252 @@
+
+view viewinvoicedtimes
+Entwurf
+CREATE VIEW viewinvoicedtimes AS
+ SELECT l.order_number,
+    l.order_position,
+    l.order_position_line,
+    l.subsidiary,
+    l.is_invoiced,
+    l.invoice_type,
+    l.invoice_number,
+    l.employee_no,
+    l.mechanic_no,
+    l.labour_operation_id,
+    l.is_nominal,
+    l.time_units,
+    l.net_price_in_order,
+    l.rebate_percent,
+    l.goodwill_percent,
+    l.charge_type,
+    l.text_line,
+    l.net_price_in_order/c.timeunit_rate AS calculated_aw 
+    FROM labours l 
+    JOIN charge_types c ON l.subsidiary=c.subsidiary AND l.charge_type=c.type 
+    WHERE l.time_units IS NOT NULL AND c.timeunit_rate >1.00
+
+-----------------------------------------
+ 
+view viewworkedtimes (fertig)
+
+CREATE view viewworkedtimes as
+SELECT t.employee_number, 
+t.order_number,
+t.start_time,
+t.type,
+t.order_positions,
+t.end_time,
+t.duration_minutes,
+t.exact_duration_seconds,
+(SELECT e.name FROM employees e WHERE t.employee_number=e.employee_number) AS name,
+(SELECT round(t.duration_minutes::numeric / (60.00 / (SELECT CAST(REGEXP_REPLACE(c.text_value,',000','') AS integer) FROM configuration_numeric c WHERE c.parameter_number=220)), 2)) AS worked_aw 
+FROM times t
+WHERE type=2
+
+-----------------------------------------
+
+view viewvehiclerevenue (fertig)
+Fahrzeugerlöse
+CREATE view viewvehiclerevenue as
+ SELECT i.invoice_type,
+    	i.invoice_number,
+    	i.invoice_date,
+    	i.total_net,
+	  	(SELECT DISTINCT o.dealer_vehicle_type FROM order_positions o WHERE i.invoice_type=o.invoice_type AND i.invoice_number=o.invoice_number), 
+    	m.description
+  FROM invoices i
+  JOIN vehicles v ON i.vehicle_number=v.internal_number
+  JOIN makes m ON v.make_number=m.make_number
+  WHERE i.invoice_type= 7 AND i.is_canceled=false OR i.invoice_type=8 AND i.is_canceled=false
+
+------------------------------------------------------------------------
+
+view viewvehiclevalues (fertig)
+132 Kalkulation
+CREATE view viewvehiclevalues as
+ SELECT d.calc_basic_charge,
+    d.calc_accessory,
+    d.calc_extra_expenses,
+    d.calc_usage_value_encr_external,
+    d.calc_usage_value_encr_internal,
+    d.calc_usage_value_encr_other,
+    d.calc_total_writedown,
+    d.dealer_vehicle_type,
+    d.out_make_number,
+    m.description,
+    d.calc_sales_aid,
+    d.calc_sales_aid_finish,
+    d.calc_sales_aid_bonus,
+    i.invoice_date
+   FROM dealer_vehicles d
+     JOIN makes m ON d.out_make_number = m.make_number
+     JOIN invoices i ON d.out_invoice_number = i.invoice_number AND d.out_invoice_type = i.invoice_type;
+
+------------------------------------------------------------------------
+
+view viewsoll (fertig)
+
+CREATE view viewsoll as
+ SELECT j.customer_number,
+    sum(j.posted_value) AS sum,
+    c.is_supplier
+   FROM journal_accountings j
+   JOIN customers_suppliers c ON j.customer_number=c.customer_number
+  WHERE j.customer_number IS NOT NULL AND j.is_balanced = 'N'::text AND j.debit_or_credit = 'S'::text
+  GROUP BY j.customer_number, c.is_supplier
+  ORDER BY j.customer_number;
+
+-----------------------------------------------------------------------
+
+view viewhaben (fertig)
+
+CREATE view viewhaben as
+ SELECT j.customer_number,
+    sum(j.posted_value) AS sum,
+    c.is_supplier
+   FROM journal_accountings j
+   JOIN customers_suppliers c ON j.customer_number=c.customer_number
+  WHERE j.customer_number IS NOT NULL AND j.is_balanced = 'N'::text AND j.debit_or_credit = 'H'::text
+  GROUP BY j.customer_number, c.is_supplier
+  ORDER BY j.customer_number;
+
+-------------------------------------------------------------------
+
+view viewopossuppliers (fertig)
+Offene Posten
+CREATE view viewopossuppliers as
+ SELECT COALESCE(s.customer_number, h.customer_number) AS supp,
+    round((COALESCE(h.sum, 0::numeric)/100), 2) AS haben,
+    round((COALESCE(s.sum, 0::numeric)/100), 2) AS soll,
+    round((COALESCE(s.sum, 0::numeric)/100 - COALESCE(h.sum, 0::numeric)/100), 2) AS opos,
+	(SELECT c.name_prefix FROM customers_suppliers c WHERE c.customer_number=h.customer_number OR c.customer_number=s.customer_number),
+	(SELECT c.first_name FROM customers_suppliers c WHERE c.customer_number=h.customer_number OR c.customer_number=s.customer_number),
+	(SELECT c.family_name FROM customers_suppliers c WHERE c.customer_number=h.customer_number OR c.customer_number=s.customer_number)
+     FROM viewsoll s
+     FULL JOIN viewhaben h ON s.customer_number = h.customer_number
+  WHERE s.customer_number IS NOT NULL AND s.is_supplier = true OR h.customer_number IS NOT NULL AND h.is_supplier = true;
+
+-------------------------------------------------------------------
+
+view viewoposcustomers (fertig)
+Offene Posten kreditoren
+CREATE view viewoposcustomers as
+ SELECT COALESCE(s.customer_number, h.customer_number) AS cust,
+    round((COALESCE(h.sum, 0::numeric)/100), 2) AS haben,
+    round((COALESCE(s.sum, 0::numeric)/100), 2) AS soll,
+    round((COALESCE(s.sum, 0::numeric)/100 - COALESCE(h.sum, 0::numeric)/100), 2) AS opos,
+        (SELECT c.name_prefix FROM customers_suppliers c WHERE c.customer_number=h.customer_number OR c.customer_number=s.customer_number),
+	(SELECT c.first_name FROM customers_suppliers c WHERE c.customer_number=h.customer_number OR c.customer_number=s.customer_number),
+	(SELECT c.family_name FROM customers_suppliers c WHERE c.customer_number=h.customer_number OR c.customer_number=s.customer_number)
+     FROM viewsoll s
+     FULL JOIN viewhaben h ON s.customer_number = h.customer_number
+  WHERE s.customer_number IS NOT NULL AND s.is_supplier = false OR h.customer_number IS NOT NULL AND h.is_supplier = false;
+
+-------------------------------------------------------------------
+
+view viewinvoicelabours (BLU) (fertig)
+
+SELECT invoices.invoice_type, invoices.invoice_number, (s.suminvoice - invoices.job_rebate) as summe
+FROM invoices
+JOIN (
+  SELECT subinvoice.invoice_type, subinvoice.invoice_number, round(sum(labours.net_price_in_order * (100 - labours.goodwill_percent) / 100), 2) AS suminvoice
+  FROM invoices subinvoice
+  LEFT JOIN labours ON labours.invoice_type = subinvoice.invoice_type AND labours.invoice_number = subinvoice.invoice_number
+  GROUP BY subinvoice.invoice_type, subinvoice.invoice_number) s
+ON s.invoice_type = invoices.invoice_type AND s.invoice_number = invoices.invoice_number AND invoices.is_canceled = FALSE
+
+WHERE invoices.invoice_type < 7 AND invoices.invoice_type != 5
+
+ORDER BY invoice_type, invoice_number;
+
+-------------------------------------------------------------------
+
+view viewsumnetpricelabours (fertig)
+272 Netto Erlöse Arbeiten
+ CREATE view viewsumnetpricelabours as
+ SELECT l.invoice_type,
+    l.invoice_number,
+    l.charge_type,
+    sum(l.net_price_in_order) AS sum,
+    l.usage_value,	
+    i.invoice_date,
+    d.description
+   FROM labours l
+     JOIN invoices i ON l.invoice_type = i.invoice_type AND l.invoice_number = i.invoice_number
+     JOIN charge_type_descriptions d ON l.charge_type = d.type
+  WHERE l.invoice_type < 7 AND l.invoice_type <> 5
+  GROUP BY l.invoice_type, l.invoice_number, l.charge_type, l.usage_value, i.invoice_date, l.net_price_in_order, d.description;
+
+--------------------------------------------------------------------
+
+view sumjobrebate (fertig)
+272 Lohnrabatte die im Tab Summen und Abschluss stehen
+Create view viewsumjobrebate as
+ SELECT i.job_rebate,
+    i.invoice_date,
+    i.invoice_type,
+    i.invoice_number
+   FROM invoices i
+  WHERE i.job_rebate > 0.00 AND i.job_rebate IS NOT NULL;
+
+---------------------------------------------------------------
+
+view sumgoodwilllabours (fertig)
+272 Lohnrabatte je Auftragszeile
+ CREATE view viewsumgoodwilllabours as
+ SELECT l.invoice_type,
+    l.invoice_number,
+    l.charge_type,
+    i.invoice_date,
+    round(sum(l.net_price_in_order) * l.goodwill_percent / 100, 2) AS sumgoodwill
+   FROM labours l
+     JOIN invoices i ON l.invoice_type = i.invoice_type AND l.invoice_number = i.invoice_number
+  WHERE l.invoice_type < 7 AND l.invoice_type <> 5 AND l.goodwill_percent>0.00 AND l.goodwill_percent is not null
+  GROUP BY l.invoice_type, l.invoice_number, l.charge_type, i.invoice_date, l.goodwill_percent, l.net_price_in_order;
+
+---------------------------------------------------------------
+
+view sumnetpriceparts (fertig)
+272 Netto Erlöse der ET
+CREATE view viewsumnetpriceparts as
+  SELECT p.invoice_type,
+    p.invoice_number,
+    round(sum(p.sum), 2) AS sum,
+    p.parts_type,
+    p.usage_value,
+    i.invoice_date,
+    pt.description
+   FROM parts p
+     JOIN invoices i ON p.invoice_type = i.invoice_type AND p.invoice_number = i.invoice_number
+     JOIN part_types pt ON p.parts_type=pt.type
+  WHERE p.is_invoiced = true
+  GROUP BY p.invoice_type, p.invoice_number, p.sum, p.parts_type, p.usage_value, i.invoice_date, pt.description;
+
+--------------------------------------------------------------
+
+view sumpartrebate (fertig)
+272 ET Rabatte im Tab Summen und Abschluss
+CREATE view viewsumpartrebate as
+ SELECT i.part_rebate,
+    i.invoice_date,
+    i.invoice_number,
+    i.invoice_type
+   FROM invoices i;
+
+---------------------------------------------------------------
+
+view sumgoodwillparts (fertig)
+272 ET Rabatte je Auftragszeile
+CREATE view viewsumgoodwillparts as
+ SELECT p.invoice_type,
+    p.invoice_number,
+    round(sum(p.sum) * p.goodwill_percent / 100::numeric, 2) AS sumgoodwill,
+    p.parts_type,
+    i.invoice_date
+   FROM parts p
+     JOIN invoices i ON p.invoice_type = i.invoice_type AND p.invoice_number = i.invoice_number
+  WHERE p.is_invoiced = true
+  GROUP BY p.invoice_type, p.invoice_number, p.sum, p.parts_type, i.invoice_date, p.goodwill_percent;
+
+
+
+
