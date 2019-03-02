@@ -1,0 +1,10 @@
+christian-kohler.path-intellisense
+ckolkman.vscode-postgres
+codingkapoor.vscode-spl-extension
+ionutvmi.path-autocomplete
+MS-CEINTL.vscode-language-pack-de
+ms-python.python
+rechinformatica.rech-editor-batch
+streetsidesoftware.code-spell-checker
+wesbos.theme-cobalt2
+zhaofinger.batch-format
